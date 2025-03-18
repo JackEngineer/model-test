@@ -179,6 +179,25 @@ export const getModels = async (): Promise<Model[]> => {
   }
 };
 
+export const getModel = async (id: string): Promise<Model> => {
+  if (useRealBackend) {
+    try {
+      const response = await apiClient.get<Model>(`/models/${id}`);
+      return response.data;
+    } catch (error) {
+      console.error(`获取模型 ${id} 失败:`, error);
+      throw error;
+    }
+  }
+
+  // 使用模拟数据
+  const model = modelsCache[id];
+  if (!model) {
+    throw new Error("Model not found");
+  }
+  return model;
+};
+
 // 添加模型
 export const addModel = async (model: Model): Promise<Model> => {
   // 确保模型有一个ID

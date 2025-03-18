@@ -67,7 +67,7 @@ const loadTestData = async () => {
     }
 }
 
-// 加载标注数据
+// 加载标注数据 - 改进版本
 const loadAnnotation = async () => {
     if (!testData.value || !testData.value.id) return;
 
@@ -75,52 +75,72 @@ const loadAnnotation = async () => {
         const testId = testData.value.id;
         // 获取标注数据
         const existingAnnotation = await getTestAnnotation(testId);
-
-        // 调试输出API返回的原始数据
-        console.log('API返回的标注数据:', existingAnnotation);
-
         if (existingAnnotation) {
-            // 检查并正确提取实体数据
-            let entityData = [];
+            let entityData: Entity[] = [];
+            let attributeData: Attribute[] = [];
+            let tripleData: Triple[] = [];
 
-            // 根据API返回格式正确提取数据 - 检查多种可能的数据位置
-            if (existingAnnotation.data && existingAnnotation.data.entities) {
-                // 标准格式: data.entities
-                entityData = existingAnnotation.data.entities;
-            } else if (existingAnnotation.entities) {
-                // 直接在顶层的entities
-                entityData = existingAnnotation.entities;
-            } else if (typeof existingAnnotation.data === 'string') {
-                // 数据可能是JSON字符串
+            // 处理双重嵌套的data.data结构（API实际返回的格式）
+            if (existingAnnotation.data && existingAnnotation.data.data) {
+                console.log('检测到双重嵌套data.data结构');
+                entityData = existingAnnotation.data.data.entities || [];
+                attributeData = existingAnnotation.data.data.attributes || [];
+                tripleData = existingAnnotation.data.data.triples || [];
+            }
+            // 处理单层data对象结构
+            else if (existingAnnotation.data && typeof existingAnnotation.data === 'object') {
+                entityData = existingAnnotation.data.entities || [];
+                attributeData = existingAnnotation.data.attributes || [];
+                tripleData = existingAnnotation.data.triples || [];
+            }
+            // 处理顶层数据结构
+            else if (existingAnnotation.entities || existingAnnotation.attributes || existingAnnotation.triples) {
+                entityData = existingAnnotation.entities || [];
+                attributeData = existingAnnotation.attributes || [];
+                tripleData = existingAnnotation.triples || [];
+            }
+            // 处理字符串格式的数据
+            else if (typeof existingAnnotation.data === 'string') {
                 try {
                     const parsedData = JSON.parse(existingAnnotation.data);
-                    entityData = parsedData.entities || [];
+                    // 检查解析后的数据是否也有嵌套结构
+                    if (parsedData.data && parsedData.data.entities) {
+                        entityData = parsedData.data.entities || [];
+                        attributeData = parsedData.data.attributes || [];
+                        tripleData = parsedData.data.triples || [];
+                    } else {
+                        entityData = parsedData.entities || [];
+                        attributeData = parsedData.attributes || [];
+                        tripleData = parsedData.triples || [];
+                    }
                 } catch (e) {
-                    console.error('解析标注数据失败:', e);
+                    console.error('解析JSON字符串标注数据失败:', e);
                 }
             }
 
             console.log('提取的实体数据:', entityData);
+            console.log('提取的属性数据:', attributeData);
+            console.log('提取的三元组数据:', tripleData);
 
-            // 直接设置实体数据
+            // 根据当前提取类型设置相应的数据
             if (testData.value.extractionType === 'entity') {
-                // 确保深拷贝
-                entities.value = JSON.parse(JSON.stringify(entityData || []));
+                // 使用深拷贝避免引用问题，确保数据完全独立
+                entities.value = JSON.parse(JSON.stringify(entityData));
+                console.log('设置到entities的数据:', entities.value);
             } else if (testData.value.extractionType === 'attribute') {
-                // 其他类型处理...
-                attributes.value = existingAnnotation.data?.attributes || [];
-            } else {
-                triples.value = existingAnnotation.data?.triples || [];
+                attributes.value = JSON.parse(JSON.stringify(attributeData));
+            } else if (testData.value.extractionType === 'relationship') {
+                triples.value = JSON.parse(JSON.stringify(tripleData));
             }
 
-            // 最后才设置annotation对象
+            // 最后设置完整annotation对象
             annotation.value = existingAnnotation;
         } else {
-            // 重置为空数据
+            // 无现有数据，重置为空
+            console.log('无现有标注数据，初始化空数据');
             entities.value = [];
             attributes.value = [];
             triples.value = [];
-
             annotation.value = {
                 testId,
                 data: {
@@ -133,6 +153,8 @@ const loadAnnotation = async () => {
         }
     } catch (error) {
         console.error('加载标注数据失败:', error);
+        ElMessage.error('加载标注数据失败，已初始化为空数据');
+
         // 重置为空数据
         entities.value = [];
         attributes.value = [];
@@ -149,13 +171,13 @@ const loadAnnotation = async () => {
     }
 }
 
-// 保存标注 - 简化实现，确保数据正确回显
+// 保存标注 - 改进版本：修复数据回显问题
 const saveAnnotation = async () => {
     if (isSaving.value) return false;
     isSaving.value = true;
 
     try {
-        // 准备保存的数据
+        // 准备要保存的数据结构 - 确保数据格式一致
         const saveData = {
             entities: extractionType.value === 'entity' ? [...entities.value] : [],
             attributes: extractionType.value === 'attribute' ? [...attributes.value] : [],
@@ -182,25 +204,76 @@ const saveAnnotation = async () => {
             return false;
         }
 
-        // 执行保存操作
+        // 执行保存操作 - 使用标准的API调用
+        console.log('准备保存的数据:', saveData);
         const response = await createTestAnnotation(testData.value.id, saveData);
-
-        // 成功保存后处理
         console.log('保存成功，API返回:', response);
+
         ElMessage.success('标注保存成功');
 
-        // 更新本地数据，确保实体数据正确更新
+        // 确保响应数据格式正确，并更新本地数据
         if (response) {
-            // 直接更新数据 - 使用深拷贝断开引用
+            // 完全替换annotation对象，避免部分更新
             annotation.value = response;
 
-            // 同时更新实体数据，确保UI立即更新
-            if (extractionType.value === 'entity' && response.data?.entities) {
-                entities.value = JSON.parse(JSON.stringify(response.data.entities));
-            } else if (extractionType.value === 'attribute' && response.data?.attributes) {
-                attributes.value = JSON.parse(JSON.stringify(response.data.attributes));
-            } else if (response.data?.triples) {
-                triples.value = JSON.parse(JSON.stringify(response.data.triples));
+            // 根据响应更新对应标注数据
+            // 特别注意实体数据的回显问题
+            if (extractionType.value === 'entity') {
+                // 提取实体数据，支持不同的数据结构
+                let updatedEntities: Entity[] = [];
+
+                // 处理双重嵌套结构 - 适应API返回格式
+                if (response.data && response.data.data && response.data.data.entities) {
+                    updatedEntities = response.data.data.entities;
+                }
+                // 处理单层data结构
+                else if (response.data && response.data.entities) {
+                    updatedEntities = response.data.entities;
+                }
+                // 处理顶层结构
+                else if (response.entities) {
+                    updatedEntities = response.entities;
+                }
+
+                // 使用深拷贝并确保entities被完全替换
+                entities.value = JSON.parse(JSON.stringify(updatedEntities));
+                console.log('更新后的实体数据:', entities.value);
+            }
+            else if (extractionType.value === 'attribute') {
+                let updatedAttributes: Attribute[] = [];
+
+                // 处理双重嵌套结构
+                if (response.data && response.data.data && response.data.data.attributes) {
+                    updatedAttributes = response.data.data.attributes;
+                }
+                // 处理单层结构
+                else if (response.data && response.data.attributes) {
+                    updatedAttributes = response.data.attributes;
+                }
+                // 处理顶层结构
+                else if (response.attributes) {
+                    updatedAttributes = response.attributes;
+                }
+
+                attributes.value = JSON.parse(JSON.stringify(updatedAttributes));
+            }
+            else if (extractionType.value === 'relationship') {
+                let updatedTriples: Triple[] = [];
+
+                // 处理双重嵌套结构
+                if (response.data && response.data.data && response.data.data.triples) {
+                    updatedTriples = response.data.data.triples;
+                }
+                // 处理单层结构
+                else if (response.data && response.data.triples) {
+                    updatedTriples = response.data.triples;
+                }
+                // 处理顶层结构
+                else if (response.triples) {
+                    updatedTriples = response.triples;
+                }
+
+                triples.value = JSON.parse(JSON.stringify(updatedTriples));
             }
         }
 

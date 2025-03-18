@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessageBox, ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus'
 
 import TripleComparer from '../components/TripleComparer.vue'
 import EntityComparer from '../components/EntityComparer.vue'
 import AttributeComparer from '../components/AttributeComparer.vue'
 import RelationshipComparer from '../components/RelationshipComparer.vue'
 
-import { getModelTestResult, getModelTest, getTestAnnotation, updateModelTestResult } from '../api'
-import type { ModelTest, Test, Triple, Entity, Attribute, Relationship } from '../types'
+import { getModelTestResult, getTest, getModel, getModelTest, getTestAnnotation, updateModelTestResult } from '../api'
+import type { ModelTest, Triple, Entity, Attribute, Relationship, Test, Model } from '../types'
 
 // 导入Element Plus图标
 import {
@@ -29,7 +29,9 @@ const router = useRouter()
 
 // 状态
 const isLoading = ref(true)
+const models = ref<Model | null>(null)
 const modelTest = ref<ModelTest | null>(null)
+const test = ref<Test | null>(null)
 const annotations = ref<any>(null)
 const modelResults = ref<any>(null)
 
@@ -38,13 +40,12 @@ const modelTestId = route.params.id as string
 
 // 提取类型
 const extractionType = computed(() => {
-    return modelTest.value?.test?.extractionType || 'relationship'
+    return test.value?.extractionType || 'relationship'
 })
 
 // 检查是否有标注数据
 const hasAnnotationData = computed(() => {
     if (!annotations.value || !annotations.value.data) return false
-
     // 根据测试类型检查相应的标注数据是否存在
     if (extractionType.value === 'relationship') {
         return manualRelationships.value.length > 0
@@ -61,19 +62,19 @@ const hasAnnotationData = computed(() => {
 
 // 手动标注的数据
 const manualTriples = computed(() => {
-    return annotations.value?.data?.triples || []
+    return annotations.value?.data?.data?.triples || []
 })
 
 const manualEntities = computed(() => {
-    return annotations.value?.data?.entities || []
+    return annotations.value?.data?.data?.entities || []
 })
 
 const manualAttributes = computed(() => {
-    return annotations.value?.data?.attributes || []
+    return annotations.value?.data?.data?.attributes || []
 })
 
 const manualRelationships = computed(() => {
-    return annotations.value?.data?.relationships || []
+    return annotations.value?.data?.data?.relationships || []
 })
 
 // 模型提取的数据
@@ -100,11 +101,18 @@ const loadData = async () => {
     try {
         // 获取模型测试信息
         const testData = await getModelTest(modelTestId)
+        const testId = testData.testId
+        test.value = await getTest(testId)
         modelTest.value = testData
+        console.log('modelTest.value:', modelTest.value)
+
+        // 获取模型列表
+        models.value = await getModel(testData.modelId)
+        console.log('models.value:', models.value)
 
         try {
             // 获取标注数据
-            const annotationData = await getTestAnnotation(testData.testId)
+            const annotationData = await getTestAnnotation(testId)
             annotations.value = annotationData
         } catch (error) {
             console.warn('获取标注数据失败:', error)
@@ -231,7 +239,8 @@ const goToAnnotation = () => {
                 <div class="flex items-center">
                     <h1 class="text-2xl font-bold text-gray-800">
                         模型测试结果
-                        <span v-if="modelTest" class="ml-2 text-primary-600">({{ modelTest.model.name }})</span>
+                        <span v-if="modelTest && modelTest.model" class="ml-2 text-primary-600">({{ modelTest.model.name
+                        }})</span>
                     </h1>
                     <div v-if="modelTest && modelTest.status === 'completed'" class="ml-4">
                         <el-tag type="success" effect="dark">测试完成</el-tag>
@@ -291,11 +300,12 @@ const goToAnnotation = () => {
                         <div class="space-y-3">
                             <p class="flex justify-between">
                                 <span class="text-gray-600 font-medium">测试名称:</span>
-                                <span class="text-gray-800">{{ modelTest.test.name }}</span>
+                                <span class="text-gray-800">{{ test?.name || '加载中...' }}</span>
                             </p>
                             <p class="flex justify-between">
                                 <span class="text-gray-600 font-medium">创建时间:</span>
-                                <span class="text-gray-800">{{ new Date(modelTest.createdAt).toLocaleString() }}</span>
+                                <span class="text-gray-800">{{ test?.createdAt ? new
+                                    Date(test.createdAt).toLocaleString() : '加载中...' }}</span>
                             </p>
                             <p class="flex justify-between items-center">
                                 <span class="text-gray-600 font-medium">抽取类型:</span>
@@ -320,12 +330,13 @@ const goToAnnotation = () => {
                         <div class="space-y-3">
                             <p class="flex justify-between">
                                 <span class="text-gray-600 font-medium">模型名称:</span>
-                                <span class="text-gray-800">{{ modelTest.model.name }}</span>
+                                <span class="text-gray-800">{{ models?.name || '加载中...' }}</span>
                             </p>
                             <p class="flex justify-between">
                                 <span class="text-gray-600 font-medium">API端点:</span>
-                                <span class="text-gray-800 truncate max-w-xs" :title="modelTest.model.apiEndpoint">
-                                    {{ modelTest.model.apiEndpoint }}
+                                <span class="text-gray-800 truncate max-w-xs"
+                                    :title="models?.apiEndpoint || ''">
+                                    {{ models?.apiEndpoint || '加载中...' }}
                                 </span>
                             </p>
                             <p class="flex justify-between items-center">
@@ -350,7 +361,7 @@ const goToAnnotation = () => {
                     </div>
                     <div
                         class="text-content whitespace-pre-wrap bg-gray-50 p-5 rounded-md border border-gray-200 text-gray-700 leading-relaxed">
-                        {{ modelTest.test.text }}
+                        {{ test?.text || '加载中...' }}
                     </div>
                 </div>
 
@@ -373,22 +384,23 @@ const goToAnnotation = () => {
                     <!-- 关系抽取结果 - 三元组比较器 -->
                     <transition name="fade" mode="out-in">
                         <TripleComparer v-if="extractionType === 'relationship'" :manual-triples="manualTriples"
-                            :model-triples="modelTriples" :model-name="modelTest.model.name"
+                            :model-triples="modelTriples" :model-name="modelTest.model?.name || '未知模型'"
                             @update:model-triples="updateModelTriples" />
 
                         <!-- 实体抽取结果 - 实体比较器 -->
                         <EntityComparer v-else-if="extractionType === 'entity'" :manual-entities="manualEntities"
-                            :model-entities="modelEntities" :model-name="modelTest.model.name"
+                            :model-entities="modelEntities" :model-name="modelTest.model?.name || '未知模型'"
                             @update:model-entities="updateModelEntities" />
 
                         <!-- 属性抽取结果 - 属性比较器 -->
                         <AttributeComparer v-else-if="extractionType === 'attribute'"
                             :manual-attributes="manualAttributes" :model-attributes="modelAttributes"
-                            :model-name="modelTest.model.name" @update:model-attributes="updateModelAttributes" />
+                            :model-name="modelTest.model?.name || '未知模型'"
+                            @update:model-attributes="updateModelAttributes" />
 
                         <!-- 关系抽取结果 - 关系比较器 -->
                         <RelationshipComparer v-else :manual-relationships="manualRelationships"
-                            :model-relationships="modelRelationships" :model-name="modelTest.model.name"
+                            :model-relationships="modelRelationships" :model-name="modelTest.model?.name || '未知模型'"
                             @update:model-relationships="updateModelRelationships" />
                     </transition>
                 </div>
@@ -460,7 +472,7 @@ const goToAnnotation = () => {
             </div>
 
             <!-- 错误状态 -->
-            <div v-else class="py-20 text-center bg-white rounded-lg shadow-md">
+            <div v-else-if="!isLoading && !modelTest" class="py-20 text-center bg-white rounded-lg shadow-md">
                 <el-icon class="text-yellow-500 text-6xl mb-4">
                     <Warning />
                 </el-icon>
