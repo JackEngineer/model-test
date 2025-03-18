@@ -2,7 +2,8 @@
 import { onMounted, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getTests, deleteTest, getModels, createModelTest } from '../api'
+import { getTests, deleteTest, getModels, createModelTest, saveApiConfig, getApiConfig } from '../api'
+import ModelConfigDialog from '../components/ModelConfigDialog.vue'
 import type { Test, Model } from '../types'
 
 // 导入Element Plus图标
@@ -21,7 +22,9 @@ import {
   Collection,
   CollectionTag,
   Connection,
-  Check
+  Check,
+  Setting,
+  Warning
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -30,18 +33,33 @@ const tests = ref<Test[]>([])
 const models = ref<Model[]>([])
 const isLoading = ref(true)
 const isTestingLoading = ref<Record<string, boolean>>({})
-const selectedModelIds = ref<Map<string, string>>(new Map())
+
+// 全局默认选择的模型ID
+const defaultModelId = ref('')
+
+// API配置对话框控制
+const configDialogVisible = ref(false)
 
 // 加载测试列表和模型列表
 const loadData = async () => {
   isLoading.value = true
   try {
-    const [testsData, modelsData] = await Promise.all([
+    const [testsData, modelsData, apiConfig] = await Promise.all([
       getTests(),
-      getModels()
+      getModels(),
+      getApiConfig()
     ])
     tests.value = testsData
     models.value = modelsData
+
+    // 设置全局默认选择的模型，优先使用API配置的默认模型
+    if (apiConfig && apiConfig.modelId && models.value.some(model => model.id === apiConfig.modelId)) {
+      defaultModelId.value = apiConfig.modelId
+    } else if (models.value.length > 0) {
+      defaultModelId.value = models.value[0].id
+    } else {
+      defaultModelId.value = ''
+    }
   } catch (error) {
     console.error('加载数据失败:', error)
     ElMessage.error('加载数据失败')
@@ -63,6 +81,11 @@ const filteredTests = computed(() => {
     test.extractionType.toLowerCase().includes(query)
   )
 })
+
+// 检查是否有可用的模型
+const hasModels = computed(() => {
+  return models.value.length > 0;
+});
 
 // 格式化日期
 const formatDate = (timestamp: number) => {
@@ -122,19 +145,32 @@ const confirmDelete = (test: Test) => {
   })
 }
 
-// 设置选中的模型
-const setSelectedModel = (testId: string, modelId: string) => {
-  selectedModelIds.value.set(testId, modelId)
+// 获取当前选中的模型
+const getSelectedModel = () => {
+  return defaultModelId.value || (models.value.length > 0 ? models.value[0].id : '')
 }
 
-// 获取选中的模型
-const getSelectedModel = (testId: string) => {
-  return selectedModelIds.value.get(testId) || ''
+// 设置默认模型
+const setDefaultModel = (modelId: string) => {
+  defaultModelId.value = modelId
+  // 更新API配置中的默认模型
+  getApiConfig().then(config => {
+    if (config) {
+      saveApiConfig({
+        ...config,
+        modelId
+      }).catch(error => {
+        console.error('更新默认模型失败', error)
+      })
+    }
+  }).catch(error => {
+    console.error('获取API配置失败', error)
+  })
 }
 
 // 开始模型测试
 const startModelTest = async (test: Test) => {
-  const selectedModelId = getSelectedModel(test.id)
+  const selectedModelId = defaultModelId.value
 
   if (!selectedModelId) {
     ElMessage.warning('请先选择模型')
@@ -186,6 +222,18 @@ const viewResult = (testId: string) => {
 const tableRowClassName = () => {
   return 'table-row-hover';
 }
+
+// 打开配置对话框
+const openConfigDialog = () => {
+  configDialogVisible.value = true
+}
+
+// 处理配置保存
+const handleConfigSave = () => {
+  ElMessage.success('API配置已保存，模型列表已更新')
+  // 重新加载数据
+  loadData()
+}
 </script>
 
 <template>
@@ -218,6 +266,51 @@ const tableRowClassName = () => {
                 <Plus />
               </el-icon> 创建测试
             </el-button>
+            <el-button type="primary" plain @click="openConfigDialog">
+              <el-icon>
+                <Setting />
+              </el-icon>
+              配置API
+            </el-button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 模型选择区域 -->
+      <div class="mb-6 bg-white p-5 rounded-lg shadow-sm" v-if="hasModels">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center">
+            <div class="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center mr-3">
+              <el-icon class="text-indigo-500">
+                <Connection />
+              </el-icon>
+            </div>
+            <div>
+              <h2 class="text-lg font-medium text-gray-800">模型选择</h2>
+              <p class="text-sm text-gray-500">选择用于所有测试的默认模型</p>
+            </div>
+          </div>
+          <div class="flex items-center">
+            <el-select v-model="defaultModelId" placeholder="选择默认模型" style="width: 200px;" @change="setDefaultModel">
+              <el-option v-for="model in models" :key="model.id" :label="model.name" :value="model.id" />
+            </el-select>
+          </div>
+        </div>
+      </div>
+
+      <!-- 提示配置API -->
+      <div class="mb-6 bg-white p-5 rounded-lg shadow-sm" v-if="!hasModels">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center">
+            <div class="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center mr-3">
+              <el-icon class="text-amber-500">
+                <Warning />
+              </el-icon>
+            </div>
+            <div>
+              <h2 class="text-lg font-medium text-gray-800">未配置API</h2>
+              <p class="text-sm text-gray-500">请先配置API以获取可用的模型列表</p>
+            </div>
           </div>
         </div>
       </div>
@@ -379,7 +472,7 @@ const tableRowClassName = () => {
             </template>
           </el-table-column>
 
-          <el-table-column label="操作" width="420" fixed="right">
+          <el-table-column label="操作" width="280" fixed="right">
             <template #default="{ row }">
               <div class="flex gap-2">
                 <el-button size="small" type="primary" plain @click="viewTest(row)" class="action-button">
@@ -388,17 +481,12 @@ const tableRowClassName = () => {
                   </el-icon> 标注
                 </el-button>
 
-                <el-select :model-value="getSelectedModel(row.id)"
-                  @update:model-value="(val: string) => setSelectedModel(row.id, val)" placeholder="选择模型" size="small"
-                  class="model-select">
-                  <el-option v-for="model in models" :key="model.id" :label="model.name" :value="model.id" />
-                </el-select>
-
-                <el-button type="success" size="small" :disabled="!getSelectedModel(row.id)"
-                  :loading="isTestingLoading[row.id]" @click="startModelTest(row)" class="action-button">
-                  <el-icon>
+                <el-button v-if="hasModels" type="success" size="small" :loading="isTestingLoading[row.id]"
+                  @click="startModelTest(row)">
+                  <el-icon class="mr-1">
                     <VideoPlay />
-                  </el-icon> 测试
+                  </el-icon>
+                  测试
                 </el-button>
 
                 <el-button type="danger" size="small" plain @click="confirmDelete(row)" class="action-button">
@@ -430,6 +518,9 @@ const tableRowClassName = () => {
         </div>
       </div>
     </div>
+
+    <!-- 阿里云百炼API配置对话框 -->
+    <ModelConfigDialog v-model:visible="configDialogVisible" @save="handleConfigSave" />
   </div>
 </template>
 
@@ -507,5 +598,10 @@ const tableRowClassName = () => {
 
 .table-row-hover:hover {
   background-color: #f8fafc;
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
 }
 </style>

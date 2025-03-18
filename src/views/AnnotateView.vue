@@ -56,25 +56,8 @@ const loadTestData = async () => {
         const test = await getTest(id.toString())
         testData.value = test
 
-        // 尝试获取标注数据
-        try {
-            const existingAnnotation = await getTestAnnotation(id.toString())
-            annotation.value = existingAnnotation
-
-            // 设置实体/属性/三元组数据
-            if (test.extractionType === 'entity') {
-                entities.value = existingAnnotation.data.entities || []
-            } else if (test.extractionType === 'attribute') {
-                attributes.value = existingAnnotation.data.attributes || []
-            } else {
-                triples.value = existingAnnotation.data.triples || []
-            }
-        } catch (error) {
-            // 如果没有现有的标注数据，使用空数组
-            entities.value = []
-            attributes.value = []
-            triples.value = []
-        }
+        // 加载标注数据
+        await loadAnnotation()
     } catch (error) {
         console.error('加载测试数据失败:', error)
         ElMessage.error('加载测试数据失败')
@@ -84,16 +67,39 @@ const loadTestData = async () => {
     }
 }
 
+// 加载标注数据
+const loadAnnotation = async () => {
+    if (!testData.value || !testData.value.id) return;
+
+    try {
+        const testId = testData.value.id;
+        const existingAnnotation = await getTestAnnotation(testId);
+        annotation.value = existingAnnotation;
+
+        if (existingAnnotation && existingAnnotation.data) {
+            // 设置实体/属性/三元组数据
+            if (testData.value.extractionType === 'entity') {
+                entities.value = existingAnnotation.data.entities || [];
+            } else if (testData.value.extractionType === 'attribute') {
+                attributes.value = existingAnnotation.data.attributes || [];
+            } else {
+                triples.value = existingAnnotation.data.triples || [];
+            }
+        }
+    } catch (error) {
+        console.error('加载标注数据失败:', error);
+        // 如果加载失败，不影响用户继续操作
+    }
+}
+
 // 保存标注
 const saveAnnotation = async () => {
     if (isSaving.value) return
     isSaving.value = true
 
     try {
-        const annotationData = {
-            testId: testData.value?.id,
-            data: {}
-        }
+        // 根据标注类型，准备标注数据
+        const annotationData = {}
 
         // 根据标注类型，设置标注数据
         if (extractionType.value === 'entity') {
@@ -102,31 +108,43 @@ const saveAnnotation = async () => {
                 isSaving.value = false
                 return
             }
-            annotationData.data.entities = entities.value
+            annotationData.entities = entities.value
         } else if (extractionType.value === 'attribute') {
             if (attributes.value.length === 0) {
                 ElMessage.warning('请先标注属性')
                 isSaving.value = false
                 return
             }
-            annotationData.data.attributes = attributes.value
+            annotationData.attributes = attributes.value
         } else {
             if (triples.value.length === 0) {
                 ElMessage.warning('请先标注三元组')
                 isSaving.value = false
                 return
             }
-            annotationData.data.triples = triples.value
+            annotationData.triples = triples.value
+        }
+
+        // 获取当前测试ID
+        const testId = testData.value?.id
+
+        if (!testId) {
+            ElMessage.error('测试ID不存在')
+            isSaving.value = false
+            return
         }
 
         // 创建或更新标注
         if (annotation.value) {
-            await updateTestAnnotation(annotation.value.id, annotationData)
+            await updateTestAnnotation(testId, annotationData)
         } else {
-            await createTestAnnotation(annotationData)
+            await createTestAnnotation(testId, annotationData)
         }
 
         ElMessage.success('保存成功')
+
+        // 重新加载标注数据，避免递归更新问题
+        await loadAnnotation()
     } catch (error) {
         console.error('保存失败:', error)
         ElMessage.error('保存失败')
