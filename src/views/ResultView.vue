@@ -19,7 +19,9 @@ import {
     Warning,
     RefreshRight,
     ArrowLeft,
-    Cpu
+    Cpu,
+    DataLine,
+    Edit
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -37,6 +39,24 @@ const modelTestId = route.params.id as string
 // 提取类型
 const extractionType = computed(() => {
     return modelTest.value?.test?.extractionType || 'relationship'
+})
+
+// 检查是否有标注数据
+const hasAnnotationData = computed(() => {
+    if (!annotations.value || !annotations.value.data) return false
+
+    // 根据测试类型检查相应的标注数据是否存在
+    if (extractionType.value === 'relationship') {
+        return manualRelationships.value.length > 0
+    } else if (extractionType.value === 'entity') {
+        return manualEntities.value.length > 0
+    } else if (extractionType.value === 'attribute') {
+        return manualAttributes.value.length > 0
+    } else if (extractionType.value === 'triple') {
+        return manualTriples.value.length > 0
+    }
+
+    return false
 })
 
 // 手动标注的数据
@@ -82,9 +102,15 @@ const loadData = async () => {
         const testData = await getModelTest(modelTestId)
         modelTest.value = testData
 
-        // 获取标注数据
-        const annotationData = await getTestAnnotation(testData.testId)
-        annotations.value = annotationData
+        try {
+            // 获取标注数据
+            const annotationData = await getTestAnnotation(testData.testId)
+            annotations.value = annotationData
+        } catch (error) {
+            console.warn('获取标注数据失败:', error)
+            // 设置为空对象而不是null，确保后续计算属性不会出错
+            annotations.value = { data: { entities: [], attributes: [], relationships: [], triples: [] } }
+        }
 
         // 获取模型结果
         const resultData = await getModelTestResult(modelTestId)
@@ -100,7 +126,9 @@ const loadData = async () => {
 // 更新模型三元组数据
 const updateModelTriples = async (newTriples: Triple[]) => {
     try {
-        if (!modelResults.value) return
+        if (!modelResults.value) {
+            modelResults.value = { triples: [] }
+        }
 
         modelResults.value.triples = newTriples
         await updateModelTestResult(modelTestId, { result: modelResults.value })
@@ -114,7 +142,9 @@ const updateModelTriples = async (newTriples: Triple[]) => {
 // 更新模型实体数据
 const updateModelEntities = async (newEntities: Entity[]) => {
     try {
-        if (!modelResults.value) return
+        if (!modelResults.value) {
+            modelResults.value = { entities: [] }
+        }
 
         modelResults.value.entities = newEntities
         await updateModelTestResult(modelTestId, { result: modelResults.value })
@@ -128,7 +158,9 @@ const updateModelEntities = async (newEntities: Entity[]) => {
 // 更新模型属性数据
 const updateModelAttributes = async (newAttributes: Attribute[]) => {
     try {
-        if (!modelResults.value) return
+        if (!modelResults.value) {
+            modelResults.value = { attributes: [] }
+        }
 
         modelResults.value.attributes = newAttributes
         await updateModelTestResult(modelTestId, { result: modelResults.value })
@@ -142,7 +174,9 @@ const updateModelAttributes = async (newAttributes: Attribute[]) => {
 // 更新模型关系数据
 const updateModelRelationships = async (newRelationships: Relationship[]) => {
     try {
-        if (!modelResults.value) return
+        if (!modelResults.value) {
+            modelResults.value = { relationships: [] }
+        }
 
         modelResults.value.relationships = newRelationships
         await updateModelTestResult(modelTestId, { result: modelResults.value })
@@ -162,6 +196,31 @@ const goBack = () => {
 onMounted(() => {
     loadData()
 })
+
+// 格式化指标
+const formatMetric = (value: number | null) => {
+    if (value === null || value === undefined) return '-';
+    return `${(value * 100).toFixed(2)}%`;
+};
+
+// 获取指标类型样式
+const getMetricType = (value: number | null) => {
+    if (value === null || value === undefined) return '';
+    if (value >= 0.8) return 'success';
+    if (value >= 0.6) return 'warning';
+    return 'danger';
+};
+
+// 跳转到标注页面
+const goToAnnotation = () => {
+    // 确保我们有测试ID
+    if (modelTest.value && modelTest.value.testId) {
+        router.push(`/annotation/${modelTest.value.testId}`)
+    } else {
+        ElMessage.warning('无法获取测试ID，请返回列表重试')
+        router.push('/')
+    }
+}
 </script>
 
 <template>
@@ -193,8 +252,30 @@ onMounted(() => {
                 </div>
             </div>
 
-            <!-- 数据内容 -->
-            <div v-else-if="modelTest" class="result-content space-y-8">
+            <!-- 无标注数据提示 -->
+            <el-alert v-if="!isLoading && modelTest && !hasAnnotationData" type="warning" :closable="false"
+                class="mb-6">
+                <div class="flex flex-col gap-3">
+                    <div class="font-medium">未找到标注数据</div>
+                    <p class="text-sm">
+                        这个测试没有标注数据，无法计算准确率、召回率等指标。为了获得完整的测试结果，建议：
+                    </p>
+                    <ul class="list-disc list-inside text-sm ml-2">
+                        <li>返回并为该测试添加标注数据</li>
+                        <li>然后重新运行测试</li>
+                    </ul>
+                    <div class="mt-2">
+                        <el-button type="primary" plain size="small" @click="goToAnnotation">
+                            <el-icon class="mr-1">
+                                <Edit />
+                            </el-icon>添加标注
+                        </el-button>
+                    </div>
+                </div>
+            </el-alert>
+
+            <!-- 测试结果内容 -->
+            <div v-if="!isLoading && modelTest" class="result-content space-y-8">
                 <!-- 测试信息和模型信息卡片 -->
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <!-- 测试信息 -->
@@ -310,6 +391,71 @@ onMounted(() => {
                             :model-relationships="modelRelationships" :model-name="modelTest.model.name"
                             @update:model-relationships="updateModelRelationships" />
                     </transition>
+                </div>
+
+                <!-- 测试结果指标 -->
+                <div class="metrics-section mb-6 bg-white p-5 rounded-lg shadow">
+                    <div class="flex items-center mb-4">
+                        <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center mr-3">
+                            <el-icon class="text-blue-500">
+                                <DataLine />
+                            </el-icon>
+                        </div>
+                        <h2 class="text-lg font-medium text-gray-800">测试结果指标</h2>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                        <!-- 准确率卡片 -->
+                        <div
+                            class="metric-card bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
+                            <h3 class="text-sm font-medium text-gray-600 mb-1">准确率 (Precision)</h3>
+                            <div class="flex items-center">
+                                <div class="text-2xl font-bold" :class="{
+                                    'text-green-600': modelTest.result?.precision >= 0.8,
+                                    'text-yellow-600': modelTest.result?.precision >= 0.6 && modelTest.result?.precision < 0.8,
+                                    'text-red-600': modelTest.result?.precision !== null && modelTest.result?.precision !== undefined && modelTest.result?.precision < 0.6,
+                                    'text-gray-400': modelTest.result?.precision === null || modelTest.result?.precision === undefined
+                                }">
+                                    {{ formatMetric(modelTest.result?.precision) }}
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">正确预测的数量 / 总预测数量</p>
+                        </div>
+
+                        <!-- 召回率卡片 -->
+                        <div
+                            class="metric-card bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
+                            <h3 class="text-sm font-medium text-gray-600 mb-1">召回率 (Recall)</h3>
+                            <div class="flex items-center">
+                                <div class="text-2xl font-bold" :class="{
+                                    'text-green-600': modelTest.result?.recall >= 0.8,
+                                    'text-yellow-600': modelTest.result?.recall >= 0.6 && modelTest.result?.recall < 0.8,
+                                    'text-red-600': modelTest.result?.recall !== null && modelTest.result?.recall !== undefined && modelTest.result?.recall < 0.6,
+                                    'text-gray-400': modelTest.result?.recall === null || modelTest.result?.recall === undefined
+                                }">
+                                    {{ formatMetric(modelTest.result?.recall) }}
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">正确预测的数量 / 实际标准数量</p>
+                        </div>
+
+                        <!-- F1分数卡片 -->
+                        <div
+                            class="metric-card bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
+                            <h3 class="text-sm font-medium text-gray-600 mb-1">F1分数</h3>
+                            <div class="flex items-center">
+                                <div class="text-2xl font-bold" :class="{
+                                    'text-green-600': modelTest.result?.f1Score >= 0.8,
+                                    'text-yellow-600': modelTest.result?.f1Score >= 0.6 && modelTest.result?.f1Score < 0.8,
+                                    'text-red-600': modelTest.result?.f1Score !== null && modelTest.result?.f1Score !== undefined && modelTest.result?.f1Score < 0.6,
+                                    'text-gray-400': modelTest.result?.f1Score === null || modelTest.result?.f1Score === undefined
+                                }">
+                                    {{ formatMetric(modelTest.result?.f1Score) }}
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">准确率和召回率的调和平均值</p>
+                        </div>
+                    </div>
                 </div>
             </div>
 

@@ -1,202 +1,136 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { testBackendConnection, toggleBackendMode } from '../api';
+import { testBackendConnection } from '../api';
 
 const isConnected = ref(false);
-const isLoading = ref(true);
-const error = ref<string | null>(null);
-const message = ref<string | null>(null);
-const messageTimer = ref<number | null>(null);
+const isLoading = ref(false);
 
-async function checkConnection() {
-    isLoading.value = true;
-    error.value = null;
-    message.value = null;
+// 检查后端连接状态
+const checkConnection = async () => {
+  isLoading.value = true;
+  try {
+    const connected = await testBackendConnection();
+    isConnected.value = connected;
+  } catch (error) {
+    console.error('检查后端连接失败:', error);
+    isConnected.value = false;
+  } finally {
+    isLoading.value = false;
+  }
+};
 
-    try {
-        const result = await testBackendConnection();
-        isConnected.value = result;
-
-        if (result) {
-            showMessage('已连接到后端服务');
-        } else {
-            showMessage('无法连接到后端，将使用模拟数据');
-        }
-    } catch (err) {
-        error.value = err instanceof Error ? err.message : '连接错误';
-        isConnected.value = false;
-        showMessage('连接出错，将使用模拟数据');
-    } finally {
-        isLoading.value = false;
-    }
-}
-
-function handleToggleMode() {
-    toggleBackendMode();
-    showMessage(`已切换到${isConnected.value ? '模拟数据' : '真实后端'}模式`);
-    isConnected.value = !isConnected.value;
-}
-
-function showMessage(msg: string) {
-    message.value = msg;
-
-    if (messageTimer.value) {
-        clearTimeout(messageTimer.value);
-    }
-
-    messageTimer.value = window.setTimeout(() => {
-        message.value = null;
-        messageTimer.value = null;
-    }, 3000);
-}
-
+// 组件挂载时检查连接
 onMounted(() => {
-    checkConnection();
+  checkConnection();
 });
 </script>
 
 <template>
-    <div class="backend-status">
-        <div v-if="isLoading" class="loading">
-            正在检查连接...
-        </div>
-
-        <div v-else class="status-container">
-            <div :class="['status', isConnected ? 'status-connected' : 'status-disconnected']">
-                <span class="status-indicator"></span>
-                <span class="status-text">后端{{ isConnected ? '已连接' : '未连接' }}</span>
-            </div>
-
-            <div class="actions">
-                <button @click="checkConnection" class="btn refresh" title="刷新连接状态">
-                    ↻
-                </button>
-                <button @click="handleToggleMode" class="btn toggle" title="切换数据模式">
-                    {{ isConnected ? '切换至模拟数据' : '切换至真实后端' }}
-                </button>
-            </div>
-        </div>
-
-        <div v-if="message" class="message">
-            {{ message }}
-        </div>
+  <div class="backend-status">
+    <div class="status-container" :class="{ 'is-connected': isConnected, 'is-loading': isLoading }">
+      <div class="status-indicator" :class="{ 'pulse': isConnected }">
+        <div class="inner-circle"></div>
+      </div>
+      <div class="status-text">
+        <span>{{ isConnected ? '服务已连接' : '服务未连接' }}</span>
+      </div>
     </div>
+  </div>
 </template>
 
 <style scoped>
 .backend-status {
-    background-color: rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
-    padding: 8px 12px;
-    position: relative;
+  display: inline-flex;
+  padding: 0.5rem;
+  border-radius: 0.5rem;
+  background-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(4px);
+  transition: all 0.3s ease;
 }
 
-.loading {
-    color: #fff;
-    font-size: 14px;
+.backend-status:hover {
+  background-color: rgba(255, 255, 255, 0.15);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 }
 
 .status-container {
-    display: flex;
-    align-items: center;
-    gap: 10px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
-.status {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+.status-container.is-connected {
+  border-color: rgba(52, 211, 153, 0.5);
+}
+
+.status-container.is-loading .status-indicator {
+  animation: rotate 1.5s linear infinite;
 }
 
 .status-indicator {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
+  position: relative;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background-color: #ef4444;
+  transition: background-color 0.3s ease;
 }
 
-.status-connected .status-indicator {
-    background-color: #4caf50;
-    box-shadow: 0 0 5px #4caf50;
+.status-container.is-connected .status-indicator {
+  background-color: #34d399;
 }
 
-.status-disconnected .status-indicator {
-    background-color: #f44336;
-    box-shadow: 0 0 5px #f44336;
+.inner-circle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 0.25rem;
+  height: 0.25rem;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.8);
+  opacity: 0.7;
 }
 
 .status-text {
-    color: #fff;
-    font-size: 14px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: white;
+  white-space: nowrap;
 }
 
-.actions {
-    display: flex;
-    gap: 8px;
+/* 脉冲动画 */
+.pulse {
+  animation: pulse 2s infinite;
 }
 
-.btn {
-    padding: 4px 8px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 13px;
-    transition: background-color 0.2s;
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.7);
+  }
+
+  70% {
+    box-shadow: 0 0 0 6px rgba(52, 211, 153, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+  }
 }
 
-.btn.refresh {
-    background-color: transparent;
-    color: #fff;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-}
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
 
-.btn.refresh:hover {
-    background-color: rgba(255, 255, 255, 0.1);
-}
-
-.btn.toggle {
-    background-color: rgba(255, 255, 255, 0.2);
-    color: white;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-}
-
-.btn.toggle:hover {
-    background-color: rgba(255, 255, 255, 0.3);
-}
-
-.message {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    background-color: rgba(0, 0, 0, 0.7);
-    color: #fff;
-    font-size: 12px;
-    padding: 5px 10px;
-    border-radius: 0 0 4px 4px;
-    margin-top: 5px;
-    animation: fadeInOut 3s ease-in-out;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    text-align: center;
-}
-
-@keyframes fadeInOut {
-    0% {
-        opacity: 0;
-    }
-
-    10% {
-        opacity: 1;
-    }
-
-    80% {
-        opacity: 1;
-    }
-
-    100% {
-        opacity: 0;
-    }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

@@ -1,13 +1,3 @@
-const Test = require('./test');
-const Model = require('./model');
-const Annotation = require('./annotation');
-const ModelTest = require('./modelTest');
-const ApiConfig = require('./apiConfig');
+// 模型已在db.js中初始化并导出为models对象，不再需要单独导出
 
-module.exports = {
-  Test,
-  Model,
-  Annotation,
-  ModelTest,
-  ApiConfig
-}; 
+module.exports = {}; 

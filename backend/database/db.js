@@ -49,31 +49,46 @@ const testConnection = async () => {
   }
 };
 
-// 同步所有模型
+// 同步模型到数据库
 const syncModels = async () => {
   try {
-    // 如果数据库被重置或不存在，使用force:true创建所有表
-    // 否则尝试使用alter:true更新表结构
-    const syncOptions = databaseReset ? 
-      { force: true } : 
-      { force: false, alter: true };
-    
-    // 在同步前，避免外键约束问题
-    await sequelize.query('PRAGMA foreign_keys = OFF;');
-    
-    await sequelize.sync(syncOptions);
-    
-    // 同步后，重新启用外键约束
-    await sequelize.query('PRAGMA foreign_keys = ON;');
-    
-    console.log('所有模型已同步到数据库');
+    // 强制创建表，这将删除现有表并重新创建
+    await sequelize.sync({ force: true });
+    console.log('数据库模型同步成功');
     return true;
   } catch (error) {
-    console.error('同步模型失败:', error);
-    // 即使模型同步失败，也不应该阻止服务器启动
-    // 先前的数据和表结构可能仍然可用
+    console.error('数据库模型同步失败:', error);
     return false;
   }
 };
 
-module.exports = { sequelize, testConnection, syncModels }; 
+// 初始化所有模型
+const initModels = () => {
+  // 注册模型
+  const Test = require('./models/test')(sequelize);
+  const Model = require('./models/model')(sequelize);
+  const ModelTest = require('./models/modelTest')(sequelize);
+  const Annotation = require('./models/annotation')(sequelize);
+  const ApiConfig = require('./models/apiConfig')(sequelize);
+
+  // 设置模型关联关系
+  Test.hasMany(ModelTest, { foreignKey: 'test_id', as: 'modelTests' });
+  ModelTest.belongsTo(Test, { foreignKey: 'test_id', as: 'test' });
+  
+  Model.hasMany(ModelTest, { foreignKey: 'model_id', as: 'modelTests' });
+  ModelTest.belongsTo(Model, { foreignKey: 'model_id', as: 'model' });
+
+  return {
+    Test,
+    Model,
+    ModelTest,
+    Annotation,
+    ApiConfig
+  };
+};
+
+// 执行模型初始化
+const models = initModels();
+
+// 导出模块
+module.exports = { sequelize, testConnection, syncModels, models }; 

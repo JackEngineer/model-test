@@ -1,15 +1,11 @@
 const { v4: uuidv4 } = require('uuid');
-const { ModelTest, Test, Model, Annotation } = require('../database/models');
+const { models } = require('../database/db');
 
 // 获取所有模型测试
 exports.getAllModelTests = async (req, res, next) => {
   try {
-    const modelTests = await ModelTest.findAll({
-      order: [['createdAt', 'DESC']],
-      include: [
-        { model: Test, as: 'test' },
-        { model: Model, as: 'model' }
-      ]
+    const modelTests = await models.ModelTest.findAll({
+      order: [['createdAt', 'DESC']]
     });
     
     res.status(200).json(modelTests);
@@ -21,18 +17,28 @@ exports.getAllModelTests = async (req, res, next) => {
 // 获取单个模型测试
 exports.getModelTestById = async (req, res, next) => {
   try {
-    const modelTest = await ModelTest.findByPk(req.params.id, {
-      include: [
-        { model: Test, as: 'test' },
-        { model: Model, as: 'model' }
-      ]
-    });
+    const modelTest = await models.ModelTest.findByPk(req.params.id);
     
     if (!modelTest) {
       return res.status(404).json({ message: '模型测试不存在' });
     }
     
     res.status(200).json(modelTest);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// 根据测试ID获取模型测试
+exports.getModelTestsByTestId = async (req, res, next) => {
+  try {
+    const testId = req.params.testId;
+    const modelTests = await models.ModelTest.findAll({
+      where: { testId },
+      order: [['createdAt', 'DESC']]
+    });
+    
+    res.status(200).json(modelTests);
   } catch (error) {
     next(error);
   }
@@ -47,19 +53,19 @@ exports.createModelTest = async (req, res, next) => {
       return res.status(400).json({ message: '缺少必要字段' });
     }
     
-    // 检查测试和模型是否存在
-    const test = await Test.findByPk(testId);
+    // 验证测试和模型是否存在
+    const test = await models.Test.findByPk(testId);
+    const model = await models.Model.findByPk(modelId);
+    
     if (!test) {
       return res.status(404).json({ message: '测试不存在' });
     }
     
-    const model = await Model.findByPk(modelId);
     if (!model) {
       return res.status(404).json({ message: '模型不存在' });
     }
     
-    // 创建模型测试
-    const modelTest = await ModelTest.create({
+    const modelTest = await models.ModelTest.create({
       id: uuidv4(),
       testId,
       modelId,
@@ -67,14 +73,12 @@ exports.createModelTest = async (req, res, next) => {
       createdAt: new Date()
     });
     
-    // 关联测试和模型
-    modelTest.test = test;
-    modelTest.model = model;
-    
-    // 启动异步处理（后续实现）
-    // processModelTest(modelTest.id);
-    
     res.status(201).json(modelTest);
+    
+    // 异步处理模型测试，不阻塞响应
+    processModelTest(modelTest.id).catch(err => 
+      console.error(`处理模型测试 ${modelTest.id} 时出错:`, err)
+    );
   } catch (error) {
     next(error);
   }
@@ -84,7 +88,7 @@ exports.createModelTest = async (req, res, next) => {
 exports.updateModelTestResult = async (req, res, next) => {
   try {
     const { result, status } = req.body;
-    const modelTest = await ModelTest.findByPk(req.params.id);
+    const modelTest = await models.ModelTest.findByPk(req.params.id);
     
     if (!modelTest) {
       return res.status(404).json({ message: '模型测试不存在' });
@@ -99,4 +103,61 @@ exports.updateModelTestResult = async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-}; 
+};
+
+// 删除模型测试
+exports.deleteModelTest = async (req, res, next) => {
+  try {
+    const modelTest = await models.ModelTest.findByPk(req.params.id);
+    
+    if (!modelTest) {
+      return res.status(404).json({ message: '模型测试不存在' });
+    }
+    
+    await modelTest.destroy();
+    
+    res.status(200).json({ message: '模型测试已删除' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// 模拟处理模型测试
+async function processModelTest(id) {
+  try {
+    // 获取模型测试
+    const modelTest = await models.ModelTest.findByPk(id);
+    if (!modelTest) {
+      throw new Error(`找不到模型测试 ${id}`);
+    }
+    
+    // 模拟处理时间
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // 更新为完成状态
+    await modelTest.update({
+      status: 'completed',
+      result: { 
+        message: '测试完成',
+        timestamp: new Date().toISOString(),
+        success: true
+      }
+    });
+    
+    console.log(`模型测试 ${id} 已处理完成`);
+  } catch (error) {
+    console.error(`处理模型测试 ${id} 失败:`, error);
+    
+    // 尝试更新为失败状态
+    try {
+      const modelTest = await models.ModelTest.findByPk(id);
+      if (modelTest) {
+        await modelTest.update({
+          status: 'failed'
+        });
+      }
+    } catch (innerError) {
+      console.error(`更新模型测试 ${id} 状态失败:`, innerError);
+    }
+  }
+} 

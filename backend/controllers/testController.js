@@ -1,10 +1,10 @@
 const { v4: uuidv4 } = require('uuid');
-const { Test } = require('../database/models');
+const { models } = require('../database/db');
 
 // 获取所有测试
 exports.getAllTests = async (req, res, next) => {
   try {
-    const tests = await Test.findAll({
+    const tests = await models.Test.findAll({
       order: [['createdAt', 'DESC']]
     });
     
@@ -17,7 +17,7 @@ exports.getAllTests = async (req, res, next) => {
 // 获取单个测试
 exports.getTestById = async (req, res, next) => {
   try {
-    const test = await Test.findByPk(req.params.id);
+    const test = await models.Test.findByPk(req.params.id);
     
     if (!test) {
       return res.status(404).json({ message: '测试不存在' });
@@ -38,7 +38,7 @@ exports.createTest = async (req, res, next) => {
       return res.status(400).json({ message: '缺少必要字段' });
     }
     
-    const test = await Test.create({
+    const test = await models.Test.create({
       id: uuidv4(),
       name,
       text,
@@ -56,7 +56,7 @@ exports.createTest = async (req, res, next) => {
 exports.updateTest = async (req, res, next) => {
   try {
     const { name, text, extractionType } = req.body;
-    const test = await Test.findByPk(req.params.id);
+    const test = await models.Test.findByPk(req.params.id);
     
     if (!test) {
       return res.status(404).json({ message: '测试不存在' });
@@ -77,7 +77,7 @@ exports.updateTest = async (req, res, next) => {
 // 删除测试
 exports.deleteTest = async (req, res, next) => {
   try {
-    const test = await Test.findByPk(req.params.id);
+    const test = await models.Test.findByPk(req.params.id);
     
     if (!test) {
       return res.status(404).json({ message: '测试不存在' });

@@ -1,14 +1,14 @@
 const { v4: uuidv4 } = require('uuid');
-const { Model } = require('../database/models');
+const { models } = require('../database/db');
 
 // 获取所有模型
 exports.getAllModels = async (req, res, next) => {
   try {
-    const models = await Model.findAll({
+    const modelsList = await models.Model.findAll({
       order: [['createdAt', 'DESC']]
     });
     
-    res.status(200).json(models);
+    res.status(200).json(modelsList);
   } catch (error) {
     next(error);
   }
@@ -17,7 +17,7 @@ exports.getAllModels = async (req, res, next) => {
 // 获取单个模型
 exports.getModelById = async (req, res, next) => {
   try {
-    const model = await Model.findByPk(req.params.id);
+    const model = await models.Model.findByPk(req.params.id);
     
     if (!model) {
       return res.status(404).json({ message: '模型不存在' });
@@ -32,16 +32,17 @@ exports.getModelById = async (req, res, next) => {
 // 创建模型
 exports.createModel = async (req, res, next) => {
   try {
-    const { name, apiEndpoint } = req.body;
+    const { name, apiEndpoint, description } = req.body;
     
     if (!name || !apiEndpoint) {
       return res.status(400).json({ message: '缺少必要字段' });
     }
     
-    const model = await Model.create({
+    const model = await models.Model.create({
       id: uuidv4(),
       name,
       apiEndpoint,
+      description: description || '',
       createdAt: new Date()
     });
     
@@ -54,8 +55,8 @@ exports.createModel = async (req, res, next) => {
 // 更新模型
 exports.updateModel = async (req, res, next) => {
   try {
-    const { name, apiEndpoint } = req.body;
-    const model = await Model.findByPk(req.params.id);
+    const { name, apiEndpoint, description } = req.body;
+    const model = await models.Model.findByPk(req.params.id);
     
     if (!model) {
       return res.status(404).json({ message: '模型不存在' });
@@ -63,7 +64,8 @@ exports.updateModel = async (req, res, next) => {
     
     await model.update({
       name: name || model.name,
-      apiEndpoint: apiEndpoint || model.apiEndpoint
+      apiEndpoint: apiEndpoint || model.apiEndpoint,
+      description: description !== undefined ? description : model.description
     });
     
     res.status(200).json(model);
@@ -75,7 +77,7 @@ exports.updateModel = async (req, res, next) => {
 // 删除模型
 exports.deleteModel = async (req, res, next) => {
   try {
-    const model = await Model.findByPk(req.params.id);
+    const model = await models.Model.findByPk(req.params.id);
     
     if (!model) {
       return res.status(404).json({ message: '模型不存在' });

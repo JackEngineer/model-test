@@ -2,7 +2,7 @@
 import { onMounted, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getTests, deleteTest, getModels, createModelTest, saveApiConfig, getApiConfig } from '../api'
+import { getTests, deleteTest, getModels, createModelTest } from '../api'
 import ModelConfigDialog from '../components/ModelConfigDialog.vue'
 import type { Test, Model } from '../types'
 
@@ -40,22 +40,42 @@ const defaultModelId = ref('')
 // API配置对话框控制
 const configDialogVisible = ref(false)
 
+// 设置选中的模型
+const setSelectedModel = (testId: string, modelId: string) => {
+  // 为每个测试保存不同的选定模型
+  selectedModelIds.value.set(testId, modelId)
+}
+
+// 获取选中的模型
+const getSelectedModel = (testId: string) => {
+  // 返回测试对应的选定模型，如果未选择则返回空字符串
+  return selectedModelIds.value.get(testId) || ''
+}
+
+// 添加选定模型IDs的状态管理
+const selectedModelIds = ref<Map<string, string>>(new Map())
+
 // 加载测试列表和模型列表
 const loadData = async () => {
   isLoading.value = true
   try {
-    const [testsData, modelsData, apiConfig] = await Promise.all([
+    const [testsData, modelsData] = await Promise.all([
       getTests(),
-      getModels(),
-      getApiConfig()
+      getModels()
     ])
     tests.value = testsData
     models.value = modelsData
 
+    // 为每个测试设置默认选中的模型
+    tests.value.forEach(test => {
+      // 如果尚未为此测试选择模型，且有可用模型，则选择第一个
+      if (!selectedModelIds.value.has(test.id) && models.value.length > 0) {
+        selectedModelIds.value.set(test.id, models.value[0].id)
+      }
+    })
+
     // 设置全局默认选择的模型，优先使用API配置的默认模型
-    if (apiConfig && apiConfig.modelId && models.value.some(model => model.id === apiConfig.modelId)) {
-      defaultModelId.value = apiConfig.modelId
-    } else if (models.value.length > 0) {
+    if (models.value.length > 0) {
       defaultModelId.value = models.value[0].id
     } else {
       defaultModelId.value = ''
@@ -145,32 +165,9 @@ const confirmDelete = (test: Test) => {
   })
 }
 
-// 获取当前选中的模型
-const getSelectedModel = () => {
-  return defaultModelId.value || (models.value.length > 0 ? models.value[0].id : '')
-}
-
-// 设置默认模型
-const setDefaultModel = (modelId: string) => {
-  defaultModelId.value = modelId
-  // 更新API配置中的默认模型
-  getApiConfig().then(config => {
-    if (config) {
-      saveApiConfig({
-        ...config,
-        modelId
-      }).catch(error => {
-        console.error('更新默认模型失败', error)
-      })
-    }
-  }).catch(error => {
-    console.error('获取API配置失败', error)
-  })
-}
-
 // 开始模型测试
 const startModelTest = async (test: Test) => {
-  const selectedModelId = defaultModelId.value
+  const selectedModelId = getSelectedModel(test.id)
 
   if (!selectedModelId) {
     ElMessage.warning('请先选择模型')
@@ -266,18 +263,12 @@ const handleConfigSave = () => {
                 <Plus />
               </el-icon> 创建测试
             </el-button>
-            <el-button type="primary" plain @click="openConfigDialog">
-              <el-icon>
-                <Setting />
-              </el-icon>
-              配置API
-            </el-button>
           </div>
         </div>
       </div>
 
       <!-- 模型选择区域 -->
-      <div class="mb-6 bg-white p-5 rounded-lg shadow-sm" v-if="hasModels">
+      <div class="mb-6 bg-white p-5 rounded-lg shadow-sm">
         <div class="flex items-center justify-between">
           <div class="flex items-center">
             <div class="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center mr-3">
@@ -286,113 +277,50 @@ const handleConfigSave = () => {
               </el-icon>
             </div>
             <div>
-              <h2 class="text-lg font-medium text-gray-800">模型选择</h2>
-              <p class="text-sm text-gray-500">选择用于所有测试的默认模型</p>
+              <h2 class="text-lg font-medium text-gray-800">模型列表</h2>
+              <p class="text-sm text-gray-500">可用于测试的模型</p>
             </div>
           </div>
           <div class="flex items-center">
-            <el-select v-model="defaultModelId" placeholder="选择默认模型" style="width: 200px;" @change="setDefaultModel">
-              <el-option v-for="model in models" :key="model.id" :label="model.name" :value="model.id" />
-            </el-select>
-          </div>
-        </div>
-      </div>
-
-      <!-- 提示配置API -->
-      <div class="mb-6 bg-white p-5 rounded-lg shadow-sm" v-if="!hasModels">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center">
-            <div class="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center mr-3">
-              <el-icon class="text-amber-500">
-                <Warning />
+            <el-button type="primary" @click="openConfigDialog">
+              <el-icon class="mr-1">
+                <Setting />
               </el-icon>
+              模型管理
+            </el-button>
+          </div>
+        </div>
+
+        <div v-if="hasModels" class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div v-for="model in models" :key="model.id"
+            class="model-card bg-gray-50 p-4 rounded-lg border border-gray-200 hover:shadow-md transition-shadow">
+            <div class="flex items-start justify-between">
+              <div>
+                <h3 class="font-medium text-gray-800">{{ model.name }}</h3>
+                <p class="text-xs text-gray-500 mt-1">ID: {{ model.id.substring(0, 12) }}</p>
+              </div>
+              <el-tag size="small" type="info" effect="plain" class="rounded-full">
+                {{ model.id === defaultModelId ? '默认' : '' }}
+              </el-tag>
             </div>
-            <div>
-              <h2 class="text-lg font-medium text-gray-800">未配置API</h2>
-              <p class="text-sm text-gray-500">请先配置API以获取可用的模型列表</p>
+            <div class="mt-2 text-xs text-gray-600">
+              <p>API端点: {{ model.apiEndpoint }}</p>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- 统计卡片 -->
-      <div class="stats-container mb-8" v-if="!isLoading && filteredTests.length > 0">
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div
-            class="stat-card bg-white p-5 rounded-lg shadow-sm border-l-4 border-blue-500 transition-all hover:shadow-md">
-            <div class="flex items-center mb-2">
-              <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center mr-3">
-                <el-icon class="text-blue-500">
-                  <DataLine />
-                </el-icon>
-              </div>
-              <span class="text-gray-600 font-medium">测试总数</span>
-            </div>
-            <div class="text-2xl font-bold text-gray-800">{{ filteredTests.length }}</div>
-          </div>
-
-          <div
-            class="stat-card bg-white p-5 rounded-lg shadow-sm border-l-4 border-green-500 transition-all hover:shadow-md">
-            <div class="flex items-center mb-2">
-              <div class="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center mr-3">
-                <el-icon class="text-green-500">
-                  <Check />
-                </el-icon>
-              </div>
-              <span class="text-gray-600 font-medium">实体抽取</span>
-            </div>
-            <div class="text-2xl font-bold text-gray-800">
-              {{filteredTests.filter(t => t.extractionType === 'entity').length}}
-            </div>
-          </div>
-
-          <div
-            class="stat-card bg-white p-5 rounded-lg shadow-sm border-l-4 border-yellow-500 transition-all hover:shadow-md">
-            <div class="flex items-center mb-2">
-              <div class="w-8 h-8 rounded-full bg-yellow-100 flex items-center justify-center mr-3">
-                <el-icon class="text-yellow-500">
-                  <CollectionTag />
-                </el-icon>
-              </div>
-              <span class="text-gray-600 font-medium">属性抽取</span>
-            </div>
-            <div class="text-2xl font-bold text-gray-800">
-              {{filteredTests.filter(t => t.extractionType === 'attribute').length}}
-            </div>
-          </div>
-
-          <div
-            class="stat-card bg-white p-5 rounded-lg shadow-sm border-l-4 border-purple-500 transition-all hover:shadow-md">
-            <div class="flex items-center mb-2">
-              <div class="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center mr-3">
-                <el-icon class="text-purple-500">
-                  <Connection />
-                </el-icon>
-              </div>
-              <span class="text-gray-600 font-medium">关系抽取</span>
-            </div>
-            <div class="text-2xl font-bold text-gray-800">
-              {{filteredTests.filter(t => t.extractionType === 'relationship').length}}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 加载状态 -->
-      <div v-if="isLoading" class="bg-white p-6 rounded-lg shadow-sm">
-        <div class="flex items-center mb-4">
-          <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center mr-3">
-            <el-icon class="text-blue-500">
-              <Loading />
+        <div v-else class="mt-4 bg-yellow-50 p-4 rounded-lg border border-yellow-200">
+          <div class="flex items-center">
+            <el-icon class="text-yellow-500 mr-2">
+              <Warning />
             </el-icon>
+            <span class="text-yellow-700">未配置API或未找到可用模型，请先配置API</span>
           </div>
-          <h2 class="text-lg font-bold text-gray-800">加载测试数据</h2>
         </div>
-        <el-skeleton :rows="5" animated />
       </div>
 
       <!-- 测试列表 -->
-      <div v-else-if="filteredTests.length > 0" class="bg-white p-6 rounded-lg shadow-sm">
+      <div v-if="!isLoading && filteredTests.length > 0" class="bg-white p-6 rounded-lg shadow-sm">
         <div class="flex items-center mb-4">
           <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center mr-3">
             <el-icon class="text-blue-500">
@@ -440,8 +368,8 @@ const handleConfigSave = () => {
           <el-table-column label="准确率" width="120" align="center">
             <template #default="{ row }">
               <div @click="row.lastTestId && viewResult(row.lastTestId)" class="cursor-pointer metric-value">
-                <el-tag v-if="row.precision !== null" :type="getMetricType(row.precision)" effect="plain"
-                  class="rounded-full px-3 metric-tag">
+                <el-tag v-if="row.precision !== null && row.precision !== undefined"
+                  :type="getMetricType(row.precision)" effect="plain" class="rounded-full px-3 metric-tag">
                   {{ formatMetric(row.precision) }}
                 </el-tag>
                 <span v-else class="text-gray-400">-</span>
@@ -452,8 +380,8 @@ const handleConfigSave = () => {
           <el-table-column label="召回率" width="120" align="center">
             <template #default="{ row }">
               <div @click="row.lastTestId && viewResult(row.lastTestId)" class="cursor-pointer metric-value">
-                <el-tag v-if="row.recall !== null" :type="getMetricType(row.recall)" effect="plain"
-                  class="rounded-full px-3 metric-tag">
+                <el-tag v-if="row.recall !== null && row.recall !== undefined" :type="getMetricType(row.recall)"
+                  effect="plain" class="rounded-full px-3 metric-tag">
                   {{ formatMetric(row.recall) }}
                 </el-tag>
                 <span v-else class="text-gray-400">-</span>
@@ -472,14 +400,19 @@ const handleConfigSave = () => {
             </template>
           </el-table-column>
 
-          <el-table-column label="操作" width="280" fixed="right">
+          <el-table-column label="操作" min-width="350" fixed="right">
             <template #default="{ row }">
-              <div class="flex gap-2">
+              <div class="flex flex-wrap gap-2">
                 <el-button size="small" type="primary" plain @click="viewTest(row)" class="action-button">
                   <el-icon>
                     <Edit />
                   </el-icon> 标注
                 </el-button>
+
+                <el-select v-if="hasModels" :model-value="getSelectedModel(row.id)"
+                  @update:model-value="(val) => setSelectedModel(row.id, val)" placeholder="选择模型" style="width: 150px;">
+                  <el-option v-for="model in models" :key="model.id" :label="model.name" :value="model.id" />
+                </el-select>
 
                 <el-button v-if="hasModels" type="success" size="small" :loading="isTestingLoading[row.id]"
                   @click="startModelTest(row)">
@@ -501,7 +434,7 @@ const handleConfigSave = () => {
       </div>
 
       <!-- 空状态 -->
-      <div v-else class="bg-white p-10 rounded-lg shadow-sm text-center">
+      <div v-else-if="!isLoading" class="bg-white p-10 rounded-lg shadow-sm text-center">
         <div class="flex flex-col items-center">
           <div class="w-20 h-20 rounded-full bg-blue-50 flex items-center justify-center mb-4">
             <el-icon class="text-blue-500 text-3xl">
@@ -516,6 +449,19 @@ const handleConfigSave = () => {
             </el-icon> 创建测试
           </el-button>
         </div>
+      </div>
+
+      <!-- 加载状态 -->
+      <div v-else class="bg-white p-6 rounded-lg shadow-sm">
+        <div class="flex items-center mb-4">
+          <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center mr-3">
+            <el-icon class="text-blue-500">
+              <Loading />
+            </el-icon>
+          </div>
+          <h2 class="text-lg font-bold text-gray-800">加载测试数据</h2>
+        </div>
+        <el-skeleton :rows="5" animated />
       </div>
     </div>
 

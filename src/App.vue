@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { onMounted } from 'vue'
 import { RouterView } from 'vue-router'
 import { initDemoData } from './api'
 import BackendStatus from './components/BackendStatus.vue'
@@ -17,7 +17,7 @@ onMounted(() => {
         <div class="container mx-auto py-4 px-6 flex justify-between items-center">
           <h1 class="text-xl font-bold">大模型抽取能力测试系统</h1>
           <div class="backend-status-container">
-            <BackendStatus />
+            <BackendStatus/>
           </div>
         </div>
       </header>
@@ -37,9 +37,5 @@ onMounted(() => {
 
 main {
   flex: 1;
-}
-
-.backend-status-container {
-  width: 300px;
 }
 </style>

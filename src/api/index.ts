@@ -2,27 +2,18 @@ import { v4 as uuidv4 } from "uuid";
 import apiClient from "./apiClient";
 import type {
   Test,
-  Model,
-  ModelTest,
   CreateTestDto,
   CreateModelDto,
+  ModelTest,
   Triple,
   Entity,
   Attribute,
   Relationship,
 } from "../types";
-import {
-  extractEntities,
-  extractAttributes,
-  extractRelationships,
-  setBaiLianApiConfig,
-  getBaiLianApiConfig,
-  getBaiLianModels,
-} from "./baiLianApi";
 
 // 模拟后端数据缓存（作为后备）
 let testsCache: Record<string, Test> = {};
-let modelsCache: Record<string, Model> = {};
+let modelsCache: Record<string, any> = {};
 let modelTestsCache: Record<string, ModelTest> = {};
 let annotationsCache: Record<string, any> = {};
 
@@ -161,125 +152,159 @@ export const deleteTest = async (id: string): Promise<void> => {
   }
 };
 
-// 模型相关 API
+// 模型相关接口
+export interface Model {
+  id: string;
+  name: string;
+  apiEndpoint: string;
+  description?: string;
+}
+
+// 获取模型列表
 export const getModels = async (): Promise<Model[]> => {
-  // 首先获取来自阿里云百炼API的模型
-  try {
-    const baiLianModels = await getBaiLianModels();
-
-    // 如果有API配置的模型，则优先使用
-    if (baiLianModels.length > 0) {
-      return baiLianModels;
-    }
-  } catch (error) {
-    console.error("获取百炼模型失败:", error);
-  }
-
   if (useRealBackend) {
     try {
-      const response = await apiClient.get<Model[]>("/models");
+      const response = await apiClient.get("/models");
       return response.data;
     } catch (error) {
-      console.error("获取模型列表失败，使用缓存数据:", error);
-      return Object.values(modelsCache).sort(
-        (a, b) => b.createdAt - a.createdAt
-      );
+      console.error("获取模型列表失败:", error);
+      // 从本地存储获取模型列表作为备选
+      const localModels = localStorage.getItem("models");
+      return localModels ? JSON.parse(localModels) : [];
     }
+  } else {
+    // 从本地存储获取模型列表
+    const localModels = localStorage.getItem("models");
+    return localModels ? JSON.parse(localModels) : [];
   }
-
-  // 使用模拟数据
-  return Object.values(modelsCache).sort((a, b) => b.createdAt - a.createdAt);
 };
 
-export const getModel = async (id: string): Promise<Model> => {
+// 添加模型
+export const addModel = async (model: Model): Promise<Model> => {
+  // 确保模型有一个ID
+  if (!model.id) {
+    model.id = Date.now().toString();
+  }
+
   if (useRealBackend) {
     try {
-      const response = await apiClient.get<Model>(`/models/${id}`);
+      const response = await apiClient.post("/models", model);
       return response.data;
     } catch (error) {
-      console.error(`获取模型 ${id} 失败，使用缓存数据:`, error);
-      const model = modelsCache[id];
-      if (!model) {
-        throw new Error("Model not found");
-      }
+      console.error("添加模型失败:", error);
+      // 保存到本地存储作为备选
+      await saveModelToLocalStorage(model);
       return model;
     }
+  } else {
+    // 保存到本地存储
+    await saveModelToLocalStorage(model);
+    return model;
   }
-
-  // 使用模拟数据
-  const model = modelsCache[id];
-  if (!model) {
-    throw new Error("Model not found");
-  }
-  return model;
 };
 
-export const createModel = async (data: CreateModelDto): Promise<Model> => {
-  if (useRealBackend) {
-    try {
-      const response = await apiClient.post<Model>("/models", data);
-      const model = response.data;
-      // 更新缓存
-      modelsCache[model.id] = model;
-      return model;
-    } catch (error) {
-      console.error("创建模型失败:", error);
-      throw error;
-    }
-  }
-
-  // 使用模拟数据
-  const id = uuidv4();
-  const model: Model = {
-    id,
-    ...data,
-    createdAt: Date.now(),
-  };
-  modelsCache[id] = model;
-  return model;
-};
-
+// 更新模型
 export const updateModel = async (
   id: string,
-  data: Partial<Model>
+  model: Partial<Model>
 ): Promise<Model> => {
   if (useRealBackend) {
     try {
-      const response = await apiClient.put<Model>(`/models/${id}`, data);
-      const model = response.data;
-      // 更新缓存
-      modelsCache[id] = model;
-      return model;
+      const response = await apiClient.put(`/models/${id}`, model);
+      return response.data;
     } catch (error) {
-      console.error(`更新模型 ${id} 失败:`, error);
-      throw error;
+      console.error("更新模型失败:", error);
+      // 更新本地存储作为备选
+      return updateModelInLocalStorage(id, model);
     }
+  } else {
+    // 更新本地存储
+    return updateModelInLocalStorage(id, model);
   }
-
-  // 使用模拟数据
-  const model = modelsCache[id];
-  if (!model) {
-    throw new Error("Model not found");
-  }
-  const updatedModel = { ...model, ...data };
-  modelsCache[id] = updatedModel;
-  return updatedModel;
 };
 
-export const deleteModel = async (id: string): Promise<void> => {
+// 删除模型
+export const deleteModel = async (id: string): Promise<boolean> => {
   if (useRealBackend) {
     try {
       await apiClient.delete(`/models/${id}`);
-      // 更新缓存
-      delete modelsCache[id];
+      return true;
     } catch (error) {
-      console.error(`删除模型 ${id} 失败:`, error);
-      throw error;
+      console.error("删除模型失败:", error);
+      // 从本地存储删除作为备选
+      return deleteModelFromLocalStorage(id);
     }
   } else {
-    // 使用模拟数据
-    delete modelsCache[id];
+    // 从本地存储删除
+    return deleteModelFromLocalStorage(id);
   }
+};
+
+// 辅助函数：保存模型到本地存储
+const saveModelToLocalStorage = async (model: Model): Promise<Model> => {
+  // 获取现有模型列表
+  const models = await getModels();
+
+  // 检查模型ID是否已存在
+  const existingIndex = models.findIndex((m) => m.id === model.id);
+
+  if (existingIndex >= 0) {
+    // 更新现有模型
+    models[existingIndex] = { ...models[existingIndex], ...model };
+  } else {
+    // 添加新模型
+    models.push(model);
+  }
+
+  // 保存回本地存储
+  localStorage.setItem("models", JSON.stringify(models));
+
+  return model;
+};
+
+// 辅助函数：更新本地存储中的模型
+const updateModelInLocalStorage = async (
+  id: string,
+  model: Partial<Model>
+): Promise<Model> => {
+  // 获取现有模型列表
+  const models = await getModels();
+
+  // 查找目标模型
+  const existingIndex = models.findIndex((m) => m.id === id);
+
+  if (existingIndex < 0) {
+    throw new Error(`模型ID ${id} 不存在`);
+  }
+
+  // 更新模型
+  models[existingIndex] = { ...models[existingIndex], ...model };
+
+  // 保存回本地存储
+  localStorage.setItem("models", JSON.stringify(models));
+
+  return models[existingIndex];
+};
+
+// 辅助函数：从本地存储删除模型
+const deleteModelFromLocalStorage = async (id: string): Promise<boolean> => {
+  // 获取现有模型列表
+  const models = await getModels();
+
+  // 查找目标模型索引
+  const existingIndex = models.findIndex((m) => m.id === id);
+
+  if (existingIndex < 0) {
+    return false; // 模型不存在
+  }
+
+  // 删除模型
+  models.splice(existingIndex, 1);
+
+  // 保存回本地存储
+  localStorage.setItem("models", JSON.stringify(models));
+
+  return true;
 };
 
 // 模型测试相关 API
@@ -439,8 +464,16 @@ export const getTestAnnotation = async (testId: string): Promise<any> => {
       return response.data;
     } catch (error: any) {
       if (error.response && error.response.status === 404) {
-        // 标注不存在，属于正常情况
-        return null;
+        // 标注不存在，属于正常情况，返回空对象而不是null
+        console.log(`测试 ${testId} 没有标注数据`);
+        return {
+          data: {
+            entities: [],
+            attributes: [],
+            relationships: [],
+            triples: [],
+          },
+        };
       }
       console.error(`获取测试标注 ${testId} 失败，使用缓存数据:`, error);
       // 在缓存中查找
@@ -448,7 +481,15 @@ export const getTestAnnotation = async (testId: string): Promise<any> => {
         (a: any) => a.testId === testId
       );
       if (!annotation) {
-        return null;
+        // 返回空对象而不是null，保持一致的数据结构
+        return {
+          data: {
+            entities: [],
+            attributes: [],
+            relationships: [],
+            triples: [],
+          },
+        };
       }
       return annotation;
     }
@@ -459,7 +500,10 @@ export const getTestAnnotation = async (testId: string): Promise<any> => {
     (a: any) => a.testId === testId
   );
   if (!annotation) {
-    return null;
+    // 返回空对象而不是null，保持一致的数据结构
+    return {
+      data: { entities: [], attributes: [], relationships: [], triples: [] },
+    };
   }
   return annotation;
 };
@@ -470,8 +514,8 @@ export const saveTestAnnotation = async (
 ): Promise<any> => {
   if (useRealBackend) {
     try {
-      const response = await apiClient.post<any>("/annotations", {
-        testId,
+      // 使用正确的API路径格式 - /:testId
+      const response = await apiClient.post<any>(`/annotations/${testId}`, {
         data,
       });
       return response.data;
@@ -498,7 +542,7 @@ export const createTestAnnotation = async (
   testId: string,
   data: any
 ): Promise<any> => {
-  // 与saveTestAnnotation函数功能相同，只是为了兼容现有代码
+  // 使用saveTestAnnotation函数，确保一致性
   return saveTestAnnotation(testId, data);
 };
 
@@ -509,23 +553,12 @@ export const updateTestAnnotation = async (
 ): Promise<any> => {
   if (useRealBackend) {
     try {
-      // 先检查是否存在
-      let annotation;
-      try {
-        const response = await apiClient.get<any>(`/annotations/${testId}`);
-        annotation = response.data;
-      } catch (e: any) {
-        if (e.response && e.response.status === 404) {
-          // 不存在，创建新的
-          return createTestAnnotation(testId, data);
-        }
-        throw e;
-      }
-
-      // 存在则更新
-      const response = await apiClient.put<any>(`/annotations/${testId}`, {
-        data,
-      });
+      // 直接使用POST请求，与后端API匹配
+      // 后端接口使用createOrUpdateAnnotation函数，通过POST /:testId实现
+      const response = await apiClient.post<any>(
+        `/annotations/${testId}`,
+        data
+      );
       return response.data;
     } catch (error) {
       console.error(`更新测试标注 ${testId} 失败:`, error);
@@ -550,107 +583,6 @@ export const updateTestAnnotation = async (
   }
 };
 
-// API配置相关
-export const getApiConfig = async () => {
-  try {
-    if (useRealBackend) {
-      try {
-        console.log("尝试从后端获取API配置...");
-        const response = await apiClient.get<any>("/api-configs/default");
-        console.log("成功获取API配置:", response.data);
-        const apiConfig = response.data;
-
-        // 同步到百炼API配置
-        if (apiConfig) {
-          setBaiLianApiConfig({
-            accessKeyId: apiConfig.accessKeyId || "",
-            accessKeySecret: apiConfig.accessKeySecret || "",
-            endpoint: apiConfig.endpoint || "",
-            modelId: apiConfig.modelId || "",
-          });
-        }
-        return apiConfig;
-      } catch (error: any) {
-        if (error.response && error.response.status === 404) {
-          // 配置不存在，属于正常情况
-          console.warn("后端API配置不存在，使用本地配置");
-        } else {
-          console.error("获取API配置失败，使用本地配置:", error);
-        }
-
-        // 回退到本地配置
-        const localConfig = getBaiLianApiConfig();
-        console.log("使用本地配置:", localConfig ? "有配置" : "无配置");
-        return localConfig;
-      }
-    }
-
-    // 使用百炼API配置
-    return getBaiLianApiConfig();
-  } catch (error) {
-    console.error("获取API配置过程中发生未预期错误:", error);
-    return null;
-  }
-};
-
-export const saveApiConfig = async (config: any) => {
-  try {
-    console.log("开始保存API配置:", { ...config, accessKeySecret: "***" });
-
-    // 同步到百炼API配置
-    setBaiLianApiConfig({
-      accessKeyId: config.accessKeyId || "",
-      accessKeySecret: config.accessKeySecret || "",
-      endpoint: config.endpoint || "",
-      modelId: config.modelId || "",
-    });
-
-    // 清空本地缓存，确保使用新的配置获取数据
-    if (typeof modelsCache === "object") {
-      // 清空对象形式的缓存
-      Object.keys(modelsCache).forEach((key) => {
-        delete modelsCache[key];
-      });
-    }
-
-    // 配置成功后切换到真实后端模式
-    useRealBackend = true;
-
-    // 立即更新模型列表缓存
-    try {
-      const models = await getBaiLianModels();
-      console.log("已更新模型列表，获取到", models.length, "个模型");
-    } catch (error) {
-      console.error("获取模型列表失败:", error);
-      // 如果获取失败，回退到mock数据
-      useRealBackend = false;
-    }
-
-    // 保存到后端
-    if (useRealBackend) {
-      try {
-        const response = await apiClient.post<any>("/api-configs", {
-          ...config,
-          isDefault: true,
-        });
-        console.log("API配置已成功保存到后端");
-        return response.data;
-      } catch (error) {
-        console.error("保存API配置到后端失败:", error);
-        // 不抛出错误，继续使用本地配置
-      }
-    }
-
-    // 返回本地百炼API配置
-    console.log("使用本地API配置");
-    return getBaiLianApiConfig();
-  } catch (error) {
-    console.error("保存API配置过程中发生错误:", error);
-    // 返回当前配置，避免完全失败
-    return getBaiLianApiConfig();
-  }
-};
-
 // 模拟模型处理测试
 const processModelTest = async (id: string) => {
   const modelTest = modelTestsCache[id];
@@ -663,19 +595,38 @@ const processModelTest = async (id: string) => {
       (a: any) => a.testId === modelTest.testId
     );
 
-    // 根据抽取类型使用百炼API进行处理
+    // 根据抽取类型处理不同的结果
     let result: any = {};
 
     if (test.extractionType === "entity") {
-      // 使用百炼API进行实体抽取
-      const entities = await extractEntities(test.text);
+      // 模拟实体抽取
+      const entities: any[] = [];
+
+      // 从测试文本中随机提取一些词作为实体
+      const words = test.text.split(/\s+/);
+      const entityTypes = ["人物", "组织", "地点", "时间", "产品"];
+
+      for (let i = 0; i < Math.min(5, words.length); i++) {
+        const randomIndex = Math.floor(Math.random() * words.length);
+        const randomType =
+          entityTypes[Math.floor(Math.random() * entityTypes.length)];
+
+        entities.push({
+          id: uuidv4(),
+          name: words[randomIndex],
+          category: randomType,
+          confidence: Math.random() * 0.5 + 0.5, // 0.5 - 1.0
+          isPositive: true,
+          evaluation: "pending",
+        });
+      }
 
       // 如果有标注数据，对结果进行评估
       if (annotation && annotation.data.entities) {
         const manualEntities = annotation.data.entities;
 
         // 评估每个抽取的实体
-        entities.forEach((entity) => {
+        entities.forEach((entity: any) => {
           // 检查是否与人工标注匹配
           const matchedEntity = manualEntities.find(
             (e: Entity) =>
@@ -693,15 +644,36 @@ const processModelTest = async (id: string) => {
 
       result = { entities };
     } else if (test.extractionType === "attribute") {
-      // 使用百炼API进行属性抽取
-      const attributes = await extractAttributes(test.text);
+      // 模拟属性抽取
+      const attributes: any[] = [];
+
+      // 生成随机属性
+      const attributeNames = ["颜色", "重量", "尺寸", "材质", "价格"];
+      const attributeValues = ["红色", "5kg", "大型", "金属", "¥199"];
+      const attributeTypes = ["基本属性", "外观属性", "物理属性", "商业属性"];
+
+      for (let i = 0; i < 5; i++) {
+        const nameIndex = Math.floor(Math.random() * attributeNames.length);
+        const valueIndex = Math.floor(Math.random() * attributeValues.length);
+        const typeIndex = Math.floor(Math.random() * attributeTypes.length);
+
+        attributes.push({
+          id: uuidv4(),
+          name: attributeNames[nameIndex],
+          value: attributeValues[valueIndex],
+          category: attributeTypes[typeIndex],
+          confidence: Math.random() * 0.5 + 0.5, // 0.5 - 1.0
+          isPositive: true,
+          evaluation: "pending",
+        });
+      }
 
       // 如果有标注数据，对结果进行评估
       if (annotation && annotation.data.attributes) {
         const manualAttributes = annotation.data.attributes;
 
         // 评估每个抽取的属性
-        attributes.forEach((attribute) => {
+        attributes.forEach((attribute: any) => {
           // 检查是否与人工标注匹配
           const matchedAttribute = manualAttributes.find(
             (a: Attribute) =>
@@ -719,15 +691,37 @@ const processModelTest = async (id: string) => {
 
       result = { attributes };
     } else {
-      // 使用百炼API进行关系抽取
-      const triples = await extractRelationships(test.text);
+      // 模拟关系抽取
+      const triples: any[] = [];
+
+      // 从测试文本中提取信息生成三元组
+      const words = test.text.split(/\s+/);
+      const predicates = ["属于", "包含", "位于", "生产", "拥有"];
+
+      for (let i = 0; i < Math.min(3, Math.floor(words.length / 3)); i++) {
+        const subjectIndex = Math.floor(Math.random() * words.length);
+        const objectIndex = Math.floor(Math.random() * words.length);
+        const predicateIndex = Math.floor(Math.random() * predicates.length);
+
+        if (subjectIndex !== objectIndex) {
+          triples.push({
+            id: uuidv4(),
+            subject: words[subjectIndex],
+            predicate: predicates[predicateIndex],
+            object: words[objectIndex],
+            confidence: Math.random() * 0.5 + 0.5, // 0.5 - 1.0
+            isPositive: true,
+            evaluation: "pending",
+          });
+        }
+      }
 
       // 如果有标注数据，对结果进行评估
       if (annotation && annotation.data.triples) {
         const manualTriples = annotation.data.triples;
 
         // 评估每个抽取的三元组
-        triples.forEach((triple) => {
+        triples.forEach((triple: any) => {
           // 检查是否与人工标注匹配
           const matchedTriple = manualTriples.find(
             (t: Triple) =>
@@ -792,23 +786,37 @@ const processModelTest = async (id: string) => {
 
 // 初始化一些示例数据
 export const initDemoData = () => {
-  // 只有在没有现有配置的情况下才初始化百炼API配置
-  const currentConfig = getBaiLianApiConfig();
-  if (!currentConfig) {
-    setBaiLianApiConfig({
-      accessKeyId: "", // 这里需要填入你的阿里云AccessKey ID
-      accessKeySecret: "", // 这里需要填入你的阿里云AccessKey Secret
-      endpoint: "https://bailian.aliyuncs.com", // 默认API端点
-      modelId: "qwen2.5-72b-instruct", // 默认使用通义千问2.5-72B模型
-    });
-  }
-
   // 在启动时测试后端连接
   testBackendConnection().then((isConnected) => {
     if (!isConnected) {
       console.log("后端未连接，将使用模拟数据初始化");
-      // 以下是模拟数据初始化的代码，保留原来的实现
-      // ... 原来的initDemoData实现 ...
+      // 加载一些示例模型
+      const demoModels = [
+        {
+          id: "model-gpt4",
+          name: "GPT-4",
+          apiEndpoint: "https://api.openai.com/v1/chat/completions",
+          description: "OpenAI 最强大的大语言模型",
+        },
+        {
+          id: "model-claude3",
+          name: "Claude 3 Opus",
+          apiEndpoint: "https://api.anthropic.com/v1/messages",
+          description: "Anthropic 的最新模型，擅长复杂推理任务",
+        },
+        {
+          id: "model-gemini",
+          name: "Gemini Pro",
+          apiEndpoint:
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+          description: "Google 的多模态大模型",
+        },
+      ];
+
+      // 保存示例模型到本地存储
+      localStorage.setItem("models", JSON.stringify(demoModels));
+
+      console.log("已初始化示例模型:", demoModels.length, "个模型");
     } else {
       console.log("后端已连接，将使用后端数据");
     }

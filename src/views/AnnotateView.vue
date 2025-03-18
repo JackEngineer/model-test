@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick, shallowRef, markRaw } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 
 import TripleAnnotator from '../components/TripleAnnotator.vue'
 import EntityAnnotator from '../components/EntityAnnotator.vue'
@@ -34,7 +34,7 @@ const router = useRouter()
 const isLoading = ref(true)
 const isSaving = ref(false)
 const testData = ref<Test | null>(null)
-const annotation = ref<any>(null)
+const annotation = shallowRef<any>(null)
 
 // 标注数据
 const entities = ref<Entity[]>([])
@@ -73,110 +73,212 @@ const loadAnnotation = async () => {
 
     try {
         const testId = testData.value.id;
+        // 获取标注数据
         const existingAnnotation = await getTestAnnotation(testId);
-        annotation.value = existingAnnotation;
 
-        if (existingAnnotation && existingAnnotation.data) {
-            // 设置实体/属性/三元组数据
-            if (testData.value.extractionType === 'entity') {
-                entities.value = existingAnnotation.data.entities || [];
-            } else if (testData.value.extractionType === 'attribute') {
-                attributes.value = existingAnnotation.data.attributes || [];
-            } else {
-                triples.value = existingAnnotation.data.triples || [];
+        // 调试输出API返回的原始数据
+        console.log('API返回的标注数据:', existingAnnotation);
+
+        if (existingAnnotation) {
+            // 检查并正确提取实体数据
+            let entityData = [];
+
+            // 根据API返回格式正确提取数据 - 检查多种可能的数据位置
+            if (existingAnnotation.data && existingAnnotation.data.entities) {
+                // 标准格式: data.entities
+                entityData = existingAnnotation.data.entities;
+            } else if (existingAnnotation.entities) {
+                // 直接在顶层的entities
+                entityData = existingAnnotation.entities;
+            } else if (typeof existingAnnotation.data === 'string') {
+                // 数据可能是JSON字符串
+                try {
+                    const parsedData = JSON.parse(existingAnnotation.data);
+                    entityData = parsedData.entities || [];
+                } catch (e) {
+                    console.error('解析标注数据失败:', e);
+                }
             }
+
+            console.log('提取的实体数据:', entityData);
+
+            // 直接设置实体数据
+            if (testData.value.extractionType === 'entity') {
+                // 确保深拷贝
+                entities.value = JSON.parse(JSON.stringify(entityData || []));
+            } else if (testData.value.extractionType === 'attribute') {
+                // 其他类型处理...
+                attributes.value = existingAnnotation.data?.attributes || [];
+            } else {
+                triples.value = existingAnnotation.data?.triples || [];
+            }
+
+            // 最后才设置annotation对象
+            annotation.value = existingAnnotation;
+        } else {
+            // 重置为空数据
+            entities.value = [];
+            attributes.value = [];
+            triples.value = [];
+
+            annotation.value = {
+                testId,
+                data: {
+                    entities: [],
+                    attributes: [],
+                    triples: [],
+                    relationships: []
+                }
+            };
         }
     } catch (error) {
         console.error('加载标注数据失败:', error);
-        // 如果加载失败，不影响用户继续操作
+        // 重置为空数据
+        entities.value = [];
+        attributes.value = [];
+        triples.value = [];
+        annotation.value = {
+            testId: testData.value.id,
+            data: {
+                entities: [],
+                attributes: [],
+                triples: [],
+                relationships: []
+            }
+        };
     }
 }
 
-// 保存标注
+// 保存标注 - 简化实现，确保数据正确回显
 const saveAnnotation = async () => {
-    if (isSaving.value) return
-    isSaving.value = true
+    if (isSaving.value) return false;
+    isSaving.value = true;
 
     try {
-        // 根据标注类型，准备标注数据
-        const annotationData = {}
+        // 准备保存的数据
+        const saveData = {
+            entities: extractionType.value === 'entity' ? [...entities.value] : [],
+            attributes: extractionType.value === 'attribute' ? [...attributes.value] : [],
+            triples: extractionType.value === 'relationship' ? [...triples.value] : [],
+            relationships: []
+        };
 
-        // 根据标注类型，设置标注数据
-        if (extractionType.value === 'entity') {
-            if (entities.value.length === 0) {
-                ElMessage.warning('请先标注实体')
-                isSaving.value = false
-                return
-            }
-            annotationData.entities = entities.value
-        } else if (extractionType.value === 'attribute') {
-            if (attributes.value.length === 0) {
-                ElMessage.warning('请先标注属性')
-                isSaving.value = false
-                return
-            }
-            annotationData.attributes = attributes.value
-        } else {
-            if (triples.value.length === 0) {
-                ElMessage.warning('请先标注三元组')
-                isSaving.value = false
-                return
-            }
-            annotationData.triples = triples.value
+        // 验证数据
+        const isEmpty = (extractionType.value === 'entity' && saveData.entities.length === 0) ||
+            (extractionType.value === 'attribute' && saveData.attributes.length === 0) ||
+            (extractionType.value === 'relationship' && saveData.triples.length === 0);
+
+        if (isEmpty) {
+            const typeLabel = extractionType.value === 'entity' ? '实体' :
+                extractionType.value === 'attribute' ? '属性' : '三元组';
+            ElMessage.warning(`请先标注${typeLabel}`);
+            isSaving.value = false;
+            return false;
         }
 
-        // 获取当前测试ID
-        const testId = testData.value?.id
-
-        if (!testId) {
-            ElMessage.error('测试ID不存在')
-            isSaving.value = false
-            return
+        if (!testData.value?.id) {
+            ElMessage.error('测试ID不存在');
+            isSaving.value = false;
+            return false;
         }
 
-        // 创建或更新标注
-        if (annotation.value) {
-            await updateTestAnnotation(testId, annotationData)
-        } else {
-            await createTestAnnotation(testId, annotationData)
+        // 执行保存操作
+        const response = await createTestAnnotation(testData.value.id, saveData);
+
+        // 成功保存后处理
+        console.log('保存成功，API返回:', response);
+        ElMessage.success('标注保存成功');
+
+        // 更新本地数据，确保实体数据正确更新
+        if (response) {
+            // 直接更新数据 - 使用深拷贝断开引用
+            annotation.value = response;
+
+            // 同时更新实体数据，确保UI立即更新
+            if (extractionType.value === 'entity' && response.data?.entities) {
+                entities.value = JSON.parse(JSON.stringify(response.data.entities));
+            } else if (extractionType.value === 'attribute' && response.data?.attributes) {
+                attributes.value = JSON.parse(JSON.stringify(response.data.attributes));
+            } else if (response.data?.triples) {
+                triples.value = JSON.parse(JSON.stringify(response.data.triples));
+            }
         }
 
-        ElMessage.success('保存成功')
-
-        // 重新加载标注数据，避免递归更新问题
-        await loadAnnotation()
-    } catch (error) {
-        console.error('保存失败:', error)
-        ElMessage.error('保存失败')
-    } finally {
-        isSaving.value = false
+        isSaving.value = false;
+        return true;
+    } catch (error: any) {
+        console.error('保存失败:', error);
+        ElMessage.error('保存失败: ' + (error.message || '未知错误'));
+        isSaving.value = false;
+        return false;
     }
 }
 
-// 完成标注并返回
+// 更新实体列表的处理函数 - 断开响应式连锁反应
+const updateEntities = (newEntities: Entity[]) => {
+    // 使用深拷贝确保断开引用
+    entities.value = JSON.parse(JSON.stringify(newEntities));
+}
+
+// 更新属性列表的处理函数
+const updateAttributes = (newAttributes: Attribute[]) => {
+    // 使用深拷贝确保断开引用
+    attributes.value = JSON.parse(JSON.stringify(newAttributes));
+}
+
+// 更新三元组列表的处理函数
+const updateTriples = (newTriples: Triple[]) => {
+    // 使用深拷贝确保断开引用
+    triples.value = JSON.parse(JSON.stringify(newTriples));
+}
+
+// 完成标注并返回首页 - 完全分离保存和导航操作
 const completeAnnotation = async () => {
     // 验证是否有标注数据
-    if (
+    const isEmpty = (
         (extractionType.value === 'entity' && entities.value.length === 0) ||
         (extractionType.value === 'attribute' && attributes.value.length === 0) ||
         (extractionType.value === 'relationship' && triples.value.length === 0)
-    ) {
+    );
+
+    if (isEmpty) {
         ElMessageBox.confirm('当前没有标注数据，确定要完成标注吗?', '提示', {
             confirmButtonText: '确定',
             cancelButtonText: '取消',
             type: 'warning'
         }).then(() => {
-            router.push('/')
-        }).catch(() => { })
-        return
+            // 直接返回首页，不尝试保存
+            router.push('/');
+        }).catch(() => {
+            // 用户取消操作
+        });
+        return;
     }
 
-    // 保存并返回
+    // 显示加载状态 - 使用ElLoading服务
+    const loadingInstance = ElLoading.service({
+        lock: true,
+        text: '正在保存...',
+        background: 'rgba(255, 255, 255, 0.7)'
+    });
+
     try {
-        await saveAnnotation()
-        router.push('/')
-    } catch (error) {
-        // 错误处理已在 saveAnnotation 中完成
+        // 尝试保存，注意这里使用await等待保存完成
+        const saveResult = await saveAnnotation();
+
+        // 关闭加载提示
+        loadingInstance.close();
+
+        if (saveResult) {
+            // 保存成功后，使用延时导航避免同一事件循环中的状态更新冲突
+            setTimeout(() => {
+                router.push('/');
+            }, 100);
+        }
+    } catch (error: any) {
+        // 关闭加载提示
+        loadingInstance.close();
+        console.error('完成标注失败:', error);
     }
 }
 
@@ -365,15 +467,14 @@ onMounted(() => {
 
                 <!-- 实体标注组件 -->
                 <EntityAnnotator v-if="extractionType === 'entity'" :content="testData.text" :entities="entities"
-                    @update:entities="newEntities => entities = newEntities" />
+                    @update:entities="updateEntities" />
 
                 <!-- 属性标注组件 -->
                 <AttributeAnnotator v-else-if="extractionType === 'attribute'" :content="testData.text"
-                    :attributes="attributes" @update:attributes="newAttributes => attributes = newAttributes" />
+                    :attributes="attributes" @update:attributes="updateAttributes" />
 
                 <!-- 三元组标注组件 -->
-                <TripleAnnotator v-else :content="testData.text" :triples="triples"
-                    @update:triples="newTriples => triples = newTriples" />
+                <TripleAnnotator v-else :content="testData.text" :triples="triples" @update:triples="updateTriples" />
             </div>
 
             <!-- 错误状态 -->
